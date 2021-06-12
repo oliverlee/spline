@@ -9,7 +9,7 @@
 namespace {
 
 template <class V, class S = typename V::value_type, class Add = std::plus<>,
-          class Mul = std::multiplies<>>
+          class Mul = spline::multiplies<S, V>>
 struct vs {
     using vector_type = V;
     using scalar_type = S;
@@ -27,15 +27,15 @@ auto main() -> int
     using boost::ut::test;
     using namespace spline::concepts;
 
-    auto add = [](auto v, auto u) -> decltype(v) {
+    auto add = [](auto v, auto u) -> decltype(decltype(v){
+                                      std::get<0>(v) + std::get<0>(u),
+                                      std::get<1>(v) + std::get<1>(u)}) {
         return {std::get<0>(v) + std::get<0>(u),
                 std::get<1>(v) + std::get<1>(u)};
     };
-    auto mul = [](auto a, auto v) -> decltype(v) {
-        return {
-            a * std::get<0>(v),
-            a * std::get<1>(v),
-        };
+    auto mul = [](auto a, auto v) -> decltype(decltype(v){a * std::get<0>(v),
+                                                          a * std::get<1>(v)}) {
+        return {a * std::get<0>(v), a * std::get<1>(v)};
     };
 
     (void)add;
@@ -58,8 +58,7 @@ auto main() -> int
                                   typename T::mul_type>);
         } |
         std::tuple<
-            vs<std::complex<float>, float, std::plus<>, decltype(mul)>,
-            vs<std::complex<double>, double, std::plus<>, decltype(mul)>,
+            vs<std::complex<float>>, vs<std::complex<double>>,
             vs<std::array<double, 2>, double, decltype(add), decltype(mul)>,
             vs<std::tuple<double, double>, double, decltype(add),
                decltype(mul)>,
@@ -72,7 +71,8 @@ auto main() -> int
                    typename T::vector_type, typename T::scalar_type,
                    typename T::add_type, typename T::mul_type>);
         } |
-        std::tuple<vs<std::complex<float>>, vs<std::complex<double>>,
+        std::tuple<vs<std::complex<float>, float, std::plus<>, decltype(mul)>,
+                   vs<std::complex<double>, double, std::plus<>, decltype(mul)>,
                    vs<std::array<double, 2>>,
                    vs<std::tuple<double, double>, double>,
                    vs<std::pair<double, double>, double>>{};
