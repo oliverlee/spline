@@ -60,4 +60,34 @@ auto main() -> int
             spline<std::array<double, 4>>{data.cbegin(), data.cend()};
         static_assert(not s2.empty());
     };
+
+    test("stride_iterator equality, stride 1") = [] {
+        constexpr auto data = std::array{0.0, 2.0, 2.0, 3.0};
+
+        using S = spline::detail::stride_iterator<decltype(data.cbegin()), 1>;
+
+        expect(++S{data.cbegin()} == S{data.cbegin(), 1});
+        expect(++S{data.cbegin()} == (S{data.cbegin()} + 1));
+
+        expect(S{data.cend()} == S{data.cbegin(), 4});
+        expect(S{data.cbegin(), 4} == S{data.cend()});
+
+        expect(S{data.cend(), -1} == S{data.cbegin(), 3});
+        expect(S{data.cbegin(), 3} == S{data.cend(), -1});
+    };
+
+    test("stride_iterator equality, stride 3") = [] {
+        constexpr auto data = std::array{0.0, 2.0, 2.0, 3.0};
+
+        using S = spline::detail::stride_iterator<decltype(data.cbegin()), 3>;
+
+        expect(++S{data.cbegin()} == S{data.cbegin(), 1});
+        expect(++S{data.cbegin()} == (S{data.cbegin()} + 1));
+
+        expect(S{data.cbegin(), 2} == S{data.cend()});
+        expect(S{data.cend()} == S{data.cbegin(), 2});
+
+        expect(S{data.cend(), -1} == S{data.cbegin()} + 1);
+        expect(S{data.cbegin()} + 1 == S{data.cend(), -1});
+    };
 }
