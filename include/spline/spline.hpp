@@ -1,9 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <iterator>
 #include <stdexcept>
+#include <type_traits>
 
 /// @file
 /// @brief A spline object
@@ -11,53 +13,6 @@
 namespace spline {
 
 namespace detail {
-
-template <class T>
-struct storage_wrapper : T {
-    using T::T;
-};
-
-template <class T, std::size_t N>
-struct storage_wrapper<std::array<T, N>> : std::array<T, N> {
-    using storage_type = std::array<T, N>;
-
-    using size_type = typename storage_type::size_type;
-    using iterator = typename storage_type::iterator;
-    using const_iterator = typename storage_type::const_iterator;
-
-    constexpr storage_wrapper() : storage_type{} {}
-
-    template <class InputIt>
-    constexpr storage_wrapper(InputIt first, InputIt last)
-    {
-        while (first != last) {
-            if ((size_ + 1) > N) {
-                throw std::runtime_error{"std::distance(first, last) > N"};
-            }
-
-            *end() = *first++;
-            ++size_;
-        }
-    }
-
-    [[nodiscard]] constexpr auto empty() const noexcept -> bool
-    {
-        return size() == 0;
-    }
-
-    constexpr auto size() const noexcept -> size_type { return size_; }
-
-    constexpr auto cend() const noexcept -> const_iterator { return end(); }
-
-  private:
-    constexpr auto end() noexcept -> iterator { return this->begin() + size_; }
-    constexpr auto end() const noexcept -> const_iterator
-    {
-        return this->begin() + size_;
-    }
-
-    size_type size_{};
-};
 
 template <class Iter, typename std::iterator_traits<Iter>::difference_type N>
 class stride_iterator {
@@ -152,22 +107,20 @@ class stride_iterator {
 
     friend constexpr auto operator-(const stride_iterator& lhs,
                                     const stride_iterator& rhs)
-        -> decltype(rhs.base() - lhs.base())
+        -> difference_type
     {
-        // TODO
-        throw std::runtime_error{"operator-"};
-        return rhs.base() - lhs.base();
+        using D = difference_type;
+
+        const auto dist = std::distance(rhs.base_, lhs.base_);
+        const auto sign = D{dist > D{}} - D{dist < D{}};
+        const auto rounded = (dist + sign * (N - 1)) / N;
+
+        return (rounded - (rhs.offset_ - lhs.offset_));
     }
     friend constexpr bool operator==(const stride_iterator& lhs,
                                      const stride_iterator& rhs)
     {
-        using D = difference_type;
-
-        const auto dist = std::distance(lhs.base_, rhs.base_);
-        const auto sign = D{dist > D{}} - D{dist < D{}};
-        const auto rounded = (dist + sign * (N - 1)) / N;
-
-        return (rounded - (lhs.offset_ - rhs.offset_)) == 0;
+        return std::distance(lhs, rhs) == 0;
     }
     friend constexpr bool operator!=(const stride_iterator& lhs,
                                      const stride_iterator& rhs)
@@ -176,20 +129,105 @@ class stride_iterator {
     }
 };
 
+constexpr auto interp_size(std::size_t point_size, std::size_t stride) noexcept
+    -> std::size_t
+{
+    if (point_size == 0) {
+        return 0;
+    }
+
+    return 1 + (point_size - 1) * stride;
+}
+
+template <class T, class Interp>
+struct storage_wrapper : T {
+    using interp_type = Interp;
+
+    using T::T;
+
+    template <class InputIt, bool Enable = (Interp::stride > 1),
+              class = std::enable_if_t<Enable>>
+    constexpr storage_wrapper(InputIt first, InputIt last)
+    {
+        this->resize(interp_size(std::distance(first, last), Interp::stride));
+        std::copy(first, last,
+                  stride_iterator<typename T::iterator, Interp::stride>{
+                      this->begin()});
+    }
+};
+
+template <class T, std::size_t N, class Interp>
+struct storage_wrapper<std::array<T, N>, Interp>
+    : std::array<T, interp_size(N, Interp::stride)> {
+    using interp_type = Interp;
+    using storage_type = std::array<T, interp_size(N, Interp::stride)>;
+
+    using size_type = typename storage_type::size_type;
+    using iterator = typename storage_type::iterator;
+    using const_iterator = typename storage_type::const_iterator;
+
+    constexpr storage_wrapper() : storage_type{} {}
+
+    template <class InputIt>
+    constexpr storage_wrapper(InputIt first, InputIt last)
+    {
+        size_ = interp_size(std::distance(first, last), Interp::stride);
+        if (size() > capacity()) {
+            throw std::runtime_error{"std::distance(first, last) > capacity()"};
+        }
+        std::copy(first, last,
+                  stride_iterator<iterator, Interp::stride>{this->begin()});
+    }
+
+    [[nodiscard]] constexpr auto empty() const noexcept -> bool
+    {
+        return size() == 0;
+    }
+
+    constexpr auto size() const noexcept -> size_type { return size_; }
+    constexpr auto capacity() const noexcept -> size_type
+    {
+        return interp_size(N, Interp::stride);
+    }
+
+    constexpr auto cend() const noexcept -> const_iterator { return end(); }
+
+  private:
+    constexpr auto end() noexcept -> iterator { return this->begin() + size_; }
+    constexpr auto end() const noexcept -> const_iterator
+    {
+        return this->begin() + size_;
+    }
+
+    size_type size_{};
+};
+
 }  // namespace detail
 
-template <class Storage>
-class spline : detail::storage_wrapper<Storage> {
-    using base_type = detail::storage_wrapper<Storage>;
+namespace interp {
+struct linear {
+    static constexpr std::size_t stride = 1;
+};
+
+struct cubic {
+    static constexpr std::size_t stride = 3;
+};
+}  // namespace interp
+
+template <class Storage, class Interp = interp::linear>
+class spline : detail::storage_wrapper<Storage, Interp> {
+    using base_type = detail::storage_wrapper<Storage, Interp>;
 
   public:
     using storage_type = Storage;
     using value_type = typename Storage::value_type;
+    using size_type = typename storage_type::size_type;
 
-    using iterator =
-        detail::stride_iterator<typename storage_type::iterator, 1>;
+    using iterator = detail::stride_iterator<typename storage_type::iterator,
+                                             Interp::stride>;
     using const_iterator =
-        detail::stride_iterator<typename storage_type::const_iterator, 1>;
+        detail::stride_iterator<typename storage_type::const_iterator,
+                                Interp::stride>;
 
     spline() = default;
 
@@ -198,18 +236,19 @@ class spline : detail::storage_wrapper<Storage> {
     {}
 
     using base_type::empty;
-    using base_type::size;
 
-    using base_type::cbegin;
-    using base_type::cend;
+    constexpr auto size() const noexcept -> size_type
+    {
+        return std::distance(cbegin(), cend());
+    }
 
     constexpr auto cbegin() const noexcept -> const_iterator
     {
-        return {base_type::cbegin(), 0};
+        return {base_type::cbegin()};
     }
     constexpr auto cend() const noexcept -> const_iterator
     {
-        return {base_type::cend(), 0};
+        return {base_type::cend()};
     }
 };
 
